@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from mistralai import Mistral
 from pymongo import MongoClient
 from datetime import datetime
+from html import escape
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -88,43 +89,56 @@ parse_mode = 'Markdown'
 def is_admin(user_id):
     return user_id == ADMIN_USER_ID
 
-# Обработчик команды для отправки сообщений от администратора
 @router.message(F.text.startswith("/send_message"))
-async def send_message_to_all_users(message: types.Message):
+async def send_message_to_all_users(message: Message):
     # Проверяем, является ли пользователь администратором
     if not is_admin(message.from_user.id):
-        await message.answer("У вас нет прав для выполнения этой команды.")
+        await message.answer("🚫 У вас нет прав для выполнения этой команды.")
         return
 
-    # Получаем текст сообщения, которое нужно отправить всем пользователям
-    text = message.text[len("/send_message "):]  # Убираем команду из текста
+    # Получаем текст сообщения, убирая команду
+    text = message.text.replace("/send_message", "").strip()
 
     if not text:
-        await message.answer("Пожалуйста, укажите сообщение, которое нужно отправить.")
+        await message.answer("❗ Пожалуйста, укажите сообщение, которое нужно отправить.")
         return
 
-    # Получаем всех пользователей из базы данных (здесь предполагается, что у вас есть коллекция пользователей)
+    # **Экранируем опасные символы в HTML**, чтобы избежать ошибок
+    text = escape(text)
+
+    # Подключение к базе данных MongoDB
     uri = "mongodb+srv://mvstarcorp:UFnERtzkd9fwvqzm@cluster0.ihw7m.mongodb.net/?retryWrites=true&w=majority&tlsAllowInvalidCertificates=True"
     client = MongoClient(uri)
+
     try:
         database = client.get_database("DB_AA_BOT")
-        users = database.get_collection("users_asist_avito")
+        users = database.get_collection("users_asist_avito_1")
 
         # Получаем список всех пользователей
         user_ids = [user["user_id"] for user in users.find()]
+        success_count = 0
+        fail_count = 0
+
         for user_id in user_ids:
             try:
-                # Отправляем сообщение всем пользователям
-                await bot.send_message(user_id, text, parse_mode=parse_mode)
+                # Отправляем сообщение пользователю
+                await message.bot.send_message(user_id, text, parse_mode="HTML")
+                success_count += 1
+                await asyncio.sleep(0.5)  # Задержка для избежания флуд-контроля
             except Exception as e:
-                logging.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+                logging.error(f"❌ Не удалось отправить сообщение пользователю {user_id}: {e}")
+                fail_count += 1
+
     except Exception as e:
-        logging.error(f"Ошибка при получении пользователей из базы данных: {e}")
+        logging.error(f"⚠ Ошибка при получении пользователей из базы данных: {e}")
     finally:
         client.close()
 
     # Отправляем подтверждение админу
-    await message.answer("Сообщение было отправлено всем пользователям.")
+    await message.answer(
+        f"✅ <b>Сообщение успешно отправлено {success_count} пользователям.</b>\n❌ Ошибок: {fail_count}",
+        parse_mode="HTML"
+    )
 
 # Функция для проверки подписки на канал
 async def check_subscription(user_id: int) -> bool:
